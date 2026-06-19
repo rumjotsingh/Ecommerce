@@ -194,6 +194,7 @@ const CreateProduct = () => {
                         placeholder="Select shipping"
                         size="large"
                         className="w-full"
+                        value={shipping || undefined}
                         onChange={(value) => setShipping(value)}
                         required
                       >
