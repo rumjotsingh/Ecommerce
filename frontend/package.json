@@ -29,6 +29,7 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "prebuild": "npx update-browserslist-db@latest",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
@@ -58,7 +59,12 @@
     "@tailwindcss/forms": "^0.5.11",
     "autoprefixer": "^10.4.20",
     "baseline-browser-mapping": "^2.10.38",
+    "caniuse-lite": "^1.0.30001799",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.18"
+  },
+  "overrides": {
+    "caniuse-lite": "$caniuse-lite",
+    "baseline-browser-mapping": "$baseline-browser-mapping"
   }
 }
