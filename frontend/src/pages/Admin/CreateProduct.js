@@ -53,6 +53,7 @@ const CreateProduct = () => {
       productData.append("quantity", quantity);
       productData.append("photo", photo);
       productData.append("category", category);
+      productData.append("shipping", shipping);
       const { data } = axios.post(API_ENDPOINTS.PRODUCT.CREATE, productData);
       if (data?.success) {
         toast.error(data?.message);
