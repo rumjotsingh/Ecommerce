@@ -1,0 +1,282 @@
+import React, { useState, useEffect, useCallback } from "react";
+import Layout from "../components/layout/layout";
+import axios from "axios";
+import { API_ENDPOINTS } from "../config/api";
+import { Checkbox, Radio } from "antd";
+import { Prices } from "../components/Prices";
+import ResultsPageHeader from "../components/Product/ResultsPageHeader";
+import ProductGrid from "../components/Product/ProductGrid";
+import {
+  AiOutlineFilter,
+  AiOutlineClose,
+} from "react-icons/ai";
+import Button from "../components/UI/Button";
+import Card from "../components/UI/Card";
+
+export const Products = () => {
+  const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [checked, setChecked] = useState([]);
+  const [radio, setRadio] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Get all categories
+  const getAllCategory = useCallback(async () => {
+    try {
+      const { data } = await axios.get(API_ENDPOINTS.CATEGORY.GET_ALL);
+      if (data?.success) {
+        setCategories(data?.category);
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  }, []);
+
+  // Get products
+  const getAllProducts = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { data } = await axios.get(API_ENDPOINTS.PRODUCT.LIST(page));
+      setLoading(false);
+      if (data?.products) {
+        setProducts(data.products);
+      }
+    } catch (error) {
+      setLoading(false);
+      console.error("Error fetching products:", error);
+    }
+  }, [page]);
+
+  // Get total count
+  const getTotal = useCallback(async () => {
+    try {
+      const { data } = await axios.get(API_ENDPOINTS.PRODUCT.COUNT);
+      setTotal(data?.total);
+    } catch (error) {
+      console.log(error);
+    }
+  }, []);
+  useEffect(() => {
+    getAllCategory();
+    getTotal();
+    getAllProducts();
+  }, [getAllCategory, getTotal, getAllProducts]);
+
+  // Load more
+  const loadMore = async () => {
+    try {
+      setLoading(true);
+      const { data } = await axios.get(API_ENDPOINTS.PRODUCT.LIST(page));
+      setLoading(false);
+      setProducts((prev) => [...prev, ...data?.products]);
+    } catch (error) {
+      console.log(error);
+      setLoading(false);
+    }
+  };
+
+  // Get filtered products
+  const filterProduct = async () => {
+    try {
+      const { data } = await axios.post(API_ENDPOINTS.PRODUCT.FILTER, {
+        checked,
+        radio,
+      });
+      setProducts(data?.products);
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  // Filter by category
+  const handleFilter = (value, id) => {
+    let all = [...checked];
+    if (value) {
+      all.push(id);
+    } else {
+      all = all.filter((c) => c !== id);
+    }
+    setChecked(all);
+  };
+
+  useEffect(() => {
+    if (page > 1) {
+      loadMore();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  useEffect(() => {
+    if (!checked.length && !radio.length && page === 1) {
+      getAllProducts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checked.length, radio.length]);
+
+  useEffect(() => {
+    if (checked.length || radio.length) {
+      filterProduct();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checked, radio]);
+
+  return (
+    <Layout title={"All Products - ShopHub"}>
+      {/* Hero Section */}
+      {/* <div className="bg-gradient-to-br from-primary-50 via-white to-secondary-50 py-10 sm:py-12 lg:py-16">
+        <div className="container mx-auto px-3 sm:px-4 lg:px-8">
+          <div className="text-center space-y-3 sm:space-y-4">
+            <div className="inline-flex items-center justify-center w-16 h-16 sm:w-18 sm:h-18 lg:w-20 lg:h-20 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-xl sm:rounded-2xl mb-3 sm:mb-4">
+              <AiOutlineAppstore
+                size={32}
+                className="text-white sm:w-9 sm:h-9 lg:w-10 lg:h-10"
+              />
+            </div>
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900">
+              All Products
+            </h1>
+            <p className="text-sm sm:text-base lg:text-lg text-gray-600 max-w-2xl mx-auto px-4">
+              Browse our complete collection of products with advanced filters
+            </p>
+          </div>
+        </div>
+      </div> */}
+
+      <section className="section-padding bg-surface-muted min-h-[calc(100vh-12rem)]">
+        <div className="max-w-8xl mx-auto container-padding">
+          <ResultsPageHeader
+            title="All Products"
+            subtitle="Browse our complete collection with filters"
+            count={loading && page === 1 ? undefined : products?.length}
+            countLabel="products"
+          />
+
+          <div className="flex items-center justify-between mb-6">
+            {total > 0 && (
+              <p className="text-sm text-primary-400">{total} total available</p>
+            )}
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="lg:hidden ml-auto flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-xl text-sm font-medium"
+            >
+              <AiOutlineFilter size={18} />
+              Filters
+            </button>
+          </div>
+
+          <div className="flex gap-6 sm:gap-8">
+            {/* Filters Sidebar */}
+            <div
+              className={`${
+                showFilters ? "block" : "hidden"
+              } lg:block fixed lg:relative inset-0 lg:inset-auto z-50 lg:z-0 bg-black bg-opacity-50 lg:bg-transparent`}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setShowFilters(false);
+              }}
+            >
+              <div className="bg-white lg:bg-transparent h-full lg:h-auto w-[280px] sm:w-80 lg:w-64 p-4 sm:p-6 lg:p-0 overflow-y-auto">
+                <div className="flex items-center justify-between lg:hidden mb-4 sm:mb-6">
+                  <h3 className="text-lg sm:text-xl font-bold">Filters</h3>
+                  <button onClick={() => setShowFilters(false)}>
+                    <AiOutlineClose size={20} className="sm:w-6 sm:h-6" />
+                  </button>
+                </div>
+
+                <div className="space-y-4 sm:space-y-6">
+                  {/* Category Filter */}
+                  <Card className="p-4 lg:p-5">
+                    <h3 className="text-base font-semibold text-primary-500 mb-4">
+                      Categories
+                    </h3>
+                    <div className="space-y-2">
+                      {categories?.map((c) => (
+                        <label
+                          key={c._id}
+                          className="flex items-center gap-3 cursor-pointer group"
+                        >
+                          <Checkbox
+                            onChange={(e) =>
+                              handleFilter(e.target.checked, c._id)
+                            }
+                          />
+                          <span className="text-sm text-primary-400 group-hover:text-primary-500 transition-colors">
+                            {c.name}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </Card>
+
+                  <Card className="p-4 lg:p-5">
+                    <h3 className="text-base font-semibold text-primary-500 mb-4">
+                      Price Range
+                    </h3>
+                    <Radio.Group
+                      onChange={(e) => setRadio(e.target.value)}
+                      className="space-y-2 sm:space-y-3 w-full"
+                    >
+                      {Prices?.map((p) => (
+                        <Radio key={p._id} value={p.array} className="block">
+                          <span className="text-sm text-primary-400">
+                            {p.name}
+                          </span>
+                        </Radio>
+                      ))}
+                    </Radio.Group>
+                  </Card>
+
+                  {/* Reset Button */}
+                  <Button
+                    variant="danger"
+                    fullWidth
+                    onClick={() => window.location.reload()}
+                    className="text-sm sm:text-base"
+                  >
+                    Reset Filters
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <ProductGrid
+                products={products}
+                loading={loading && page === 1}
+                columns={4}
+                emptyTitle="No products found"
+                emptyDescription="We couldn't find any products matching your filters. Try adjusting them or browse all categories."
+                emptyActionText="Clear Filters"
+                onEmptyAction={() => {
+                  setChecked([]);
+                  setRadio([]);
+                  getAllProducts();
+                }}
+              />
+
+              {products?.length > 0 && products.length < total && (
+                <div className="text-center mt-10">
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setPage(page + 1);
+                    }}
+                    disabled={loading}
+                  >
+                    {loading ? "Loading..." : "Load More Products"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+    </Layout>
+  );
+};
+
+export default Products;

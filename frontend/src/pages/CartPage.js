@@ -1,0 +1,493 @@
+import React, { useState, useEffect } from "react";
+import Layout from "../components/layout/layout";
+import { useAuth } from "../context/auth";
+import { useNavigate } from "react-router-dom";
+import { useDispatch, useSelector } from "react-redux";
+
+import { getProductImageUrl } from "../utils/productImage";
+import toast from "react-hot-toast";
+import { applyCoupon, clearAppliedCoupon } from "../redux/slices/couponSlice";
+import {
+  getRazorpayKey,
+  createRazorpayOrder,
+  verifyRazorpayPayment,
+  clearPaymentState,
+} from "../redux/slices/paymentSlice";
+import {
+  updateCartItemQuantity,
+  removeFromCart,
+  clearCart,
+} from "../redux/slices/cartSlice";
+import {
+  AiOutlineDelete,
+  AiOutlineMinus,
+  AiOutlinePlus,
+  AiOutlineRight,
+} from "react-icons/ai";
+import { BiShoppingBag } from "react-icons/bi";
+import Button from "../components/UI/Button";
+import Card from "../components/UI/Card";
+import EmptyState from "../components/UI/EmptyState";
+
+const CartPage = () => {
+  const [auth] = useAuth();
+  const { items: cart } = useSelector((state) => state.cart);
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const {
+    appliedCoupon,
+    discount,
+    loading: couponLoading,
+  } = useSelector((state) => state.coupon);
+  const { razorpayKey } = useSelector((state) => state.payment);
+  const [loading, setLoading] = useState(false);
+  const [couponCode, setCouponCode] = useState("");
+
+  //total price
+  const subtotal = () => {
+    let total = 0;
+    cart?.forEach((item) => {
+      const qty = item.orderQuantity || 1;
+      total = total + item.price * qty;
+    });
+    return total;
+  };
+
+  const calculateTotal = () => {
+    const sub = subtotal();
+    const tax = sub * 0.1;
+    const finalTotal = sub + tax - discount;
+    return finalTotal > 0 ? finalTotal : 0;
+  };
+
+  const updateQuantity = (productId, newQty) => {
+    if (newQty >= 1) {
+      dispatch(updateCartItemQuantity({ id: productId, quantity: newQty }));
+    }
+  };
+
+  //delete item
+  const removeCartItem = (pid) => {
+    try {
+      dispatch(removeFromCart(pid));
+      toast.success("Item removed from cart");
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  // Handle coupon apply
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) {
+      toast.error("Please enter a coupon code");
+      return;
+    }
+
+    try {
+      const result = await dispatch(
+        applyCoupon({ code: couponCode, totalAmount: subtotal() })
+      ).unwrap();
+      // Backend returns {success: true, data: {...}}
+      const couponData = result.data || result;
+      const savedAmount = parseFloat(couponData.discountAmount) || 0;
+      toast.success(`Coupon applied! You saved ₹${savedAmount.toFixed(2)}`);
+    } catch (err) {
+      toast.error(err.message || "Invalid coupon code");
+    }
+  };
+
+  // Handle remove coupon
+  const handleRemoveCoupon = () => {
+    dispatch(clearAppliedCoupon());
+    setCouponCode("");
+    toast.success("Coupon removed");
+  };
+
+  // Get Razorpay key
+  useEffect(() => {
+    if (auth?.token) {
+      dispatch(getRazorpayKey());
+    }
+  }, [auth?.token, dispatch]);
+
+  // Clear payment state on unmount
+  useEffect(() => {
+    return () => {
+      dispatch(clearPaymentState());
+    };
+  }, [dispatch]);
+
+  // Load Razorpay script
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
+  // Handle Razorpay payment
+  const handlePayment = async () => {
+    try {
+      setLoading(true);
+
+      // Load Razorpay script
+      const scriptLoaded = await loadRazorpayScript();
+      if (!scriptLoaded) {
+        toast.error("Failed to load payment gateway");
+        setLoading(false);
+        return;
+      }
+
+      // Create order
+      const orderResult = await dispatch(
+        createRazorpayOrder({
+          amount: Math.round(calculateTotal() * 100),
+          cart,
+        })
+      ).unwrap();
+
+      const razorpayOrderId = orderResult.order?.id || orderResult.id;
+
+      const options = {
+        key: razorpayKey,
+        amount: orderResult.order?.amount,
+        currency: orderResult.currency || "INR",
+        name: "ShopHub",
+        description: "Order Payment",
+        order_id: razorpayOrderId,
+        handler: async function (response) {
+          try {
+            const cartWithQuantities = cart.map((item) => ({
+              id: item._id,
+              name: item.name,
+              price: item.price,
+              quantity: item.orderQuantity || 1,
+            }));
+
+            await dispatch(
+              verifyRazorpayPayment({
+                razorpay_order_id: razorpayOrderId,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                cart: cartWithQuantities,
+              })
+            ).unwrap();
+
+            setLoading(false);
+            dispatch(clearCart());
+            dispatch(clearAppliedCoupon());
+            navigate("/dashborad/user/orders");
+            toast.success("Payment Completed Successfully!");
+          } catch (error) {
+            setLoading(false);
+            toast.error("Payment verification failed");
+            console.error("Payment verification error:", error);
+          }
+        },
+        prefill: {
+          name: auth?.user?.name,
+          email: auth?.user?.email,
+          contact: auth?.user?.phone,
+        },
+        theme: {
+          color: "#0EA5A4",
+        },
+      };
+
+      const razorpay = new window.Razorpay(options);
+      razorpay.on("payment.failed", function (response) {
+        setLoading(false);
+        toast.error("Payment failed. Please try again.");
+      });
+      razorpay.open();
+      setLoading(false);
+    } catch (error) {
+      console.error(error);
+      setLoading(false);
+      toast.error(
+        typeof error === "string"
+          ? error
+          : error?.message || "Payment failed. Please try again."
+      );
+    }
+  };
+
+  return (
+    <Layout title="Shopping Cart — ShopHub">
+      <div className="section-padding bg-surface-muted min-h-screen">
+        <div className="max-w-8xl mx-auto container-padding">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-primary-500 tracking-tight mb-2">
+              Shopping Cart
+            </h1>
+            <p className="text-gray-600">
+              {cart?.length
+                ? `You have ${cart.length} item${
+                    cart.length > 1 ? "s" : ""
+                  } in your cart`
+                : "Your cart is empty"}
+            </p>
+          </div>
+
+          {cart?.length === 0 ? (
+            <Card className="text-center py-16">
+              <EmptyState
+                icon={<BiShoppingBag className="w-24 h-24 text-neutral-300" />}
+                title="Your cart is empty"
+                description="Start shopping to add items to your cart. Discover amazing products and great deals!"
+                actionText="Continue Shopping"
+                onAction={() => navigate("/")}
+              />
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              {/* Cart Items */}
+              <div className="xl:col-span-2 space-y-4">
+                {cart?.map((product) => (
+                  <Card key={product._id} hover>
+                    <div className="flex flex-col md:flex-row gap-4 p-4">
+                      {/* Product Image */}
+                      <div
+                        className="w-full md:w-28 h-28 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0 cursor-pointer"
+                        onClick={() => navigate(`/product/${product.slug}`)}
+                      >
+                        <img
+                          src={getProductImageUrl(product)}
+                          alt={product.name}
+                          className="w-full h-full object-cover hover:scale-110 transition-transform duration-300"
+                        />
+                      </div>
+
+                      {/* Product Details */}
+                      <div className="flex-1 flex flex-col justify-between min-w-0">
+                        <div className="space-y-2">
+                          <h3
+                            className="text-base md:text-lg font-semibold text-gray-900 hover:text-primary-500 cursor-pointer transition-colors truncate"
+                            onClick={() => navigate(`/product/${product.slug}`)}
+                          >
+                            {product.name}
+                          </h3>
+                          <p className="text-xs md:text-sm text-gray-600 line-clamp-1 md:line-clamp-2">
+                            {product.description}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mt-3">
+                          {/* Price */}
+                          <div className="text-xl md:text-2xl font-bold text-primary-500">
+                            ₹{product.price?.toLocaleString()}
+                          </div>
+
+                          {/* Quantity Controls */}
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() =>
+                                updateQuantity(
+                                  product._id,
+                                  (product.orderQuantity || 1) - 1
+                                )
+                              }
+                              className="w-8 h-8 rounded-lg border-2 border-gray-300 flex items-center justify-center text-gray-700 hover:border-primary-500 hover:text-primary-500 hover:bg-primary-50 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                              aria-label="Decrease quantity"
+                            >
+                              <AiOutlineMinus size={14} />
+                            </button>
+                            <span className="text-base font-semibold w-10 text-center">
+                              {product.orderQuantity || 1}
+                            </span>
+                            <button
+                              onClick={() =>
+                                updateQuantity(
+                                  product._id,
+                                  (product.orderQuantity || 1) + 1
+                                )
+                              }
+                              className="w-8 h-8 rounded-lg border-2 border-gray-300 flex items-center justify-center text-gray-700 hover:border-primary-500 hover:text-primary-500 hover:bg-primary-50 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                              aria-label="Increase quantity"
+                            >
+                              <AiOutlinePlus size={14} />
+                            </button>
+                          </div>
+
+                          {/* Remove Button */}
+                          <button
+                            onClick={() => removeCartItem(product._id)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-all duration-200 active:scale-95 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                            aria-label="Remove item"
+                          >
+                            <AiOutlineDelete size={18} />
+                            <span className="font-medium">Remove</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+
+              {/* Order Summary */}
+              <div className="xl:col-span-1">
+                <div className="sticky top-20">
+                  <Card className="p-6">
+                    <h2 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">
+                      Order Summary
+                    </h2>
+
+                    {/* Coupon Section */}
+                    <div className="mb-6">
+                      <h3 className="font-semibold text-gray-900 mb-3 text-sm md:text-base">
+                        Apply Coupon
+                      </h3>
+                      {appliedCoupon ? (
+                        <div className="flex items-center justify-between p-3 md:p-4 bg-green-50 border border-green-200 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <span className="text-green-600 font-semibold text-sm md:text-base">
+                              {appliedCoupon.code}
+                            </span>
+                            <span className="text-xs md:text-sm text-green-600">
+                              (-₹{discount.toFixed(2)})
+                            </span>
+                          </div>
+                          <button
+                            onClick={handleRemoveCoupon}
+                            className="text-xs md:text-sm text-red-500 hover:text-red-600 font-medium"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col mf:flex-row gap-2">
+                          <input
+                            type="text"
+                            value={couponCode}
+                            onChange={(e) =>
+                              setCouponCode(e.target.value.toUpperCase())
+                            }
+                            placeholder="Enter coupon code"
+                            className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          />
+                          <Button
+                            variant="outline"
+                            onClick={handleApplyCoupon}
+                            disabled={couponLoading || !couponCode.trim()}
+                            className="whitespace-nowrap text-sm px-3"
+                          >
+                            {couponLoading ? "Applying..." : "Apply"}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Price Breakdown */}
+                    <div className="space-y-3 mb-6 text-sm md:text-base">
+                      <div className="flex justify-between text-gray-600">
+                        <span>Subtotal</span>
+                        <span className="font-medium">
+                          ₹{subtotal().toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>Shipping</span>
+                        <span className="font-medium text-green-500">Free</span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>Tax (10%)</span>
+                        <span className="font-medium">
+                          ₹{(subtotal() * 0.1).toFixed(2)}
+                        </span>
+                      </div>
+                      {discount > 0 && (
+                        <div className="flex justify-between text-green-600">
+                          <span>Discount ({appliedCoupon?.code})</span>
+                          <span className="font-medium">
+                            -₹{discount.toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="border-t pt-3 md:pt-4">
+                        <div className="flex justify-between items-baseline">
+                          <span className="text-lg md:text-xl font-semibold text-gray-900">
+                            Total
+                          </span>
+                          <span className="text-2xl md:text-3xl font-bold text-primary-500">
+                            ₹{calculateTotal().toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Address Section */}
+                    {auth?.user?.address ? (
+                      <div className="mb-6 p-3 md:p-4 bg-gray-50 rounded-lg">
+                        <h3 className="font-semibold text-gray-900 mb-2 text-sm md:text-base">
+                          Delivery Address
+                        </h3>
+                        <p className="text-xs md:text-sm text-gray-600 mb-3">
+                          {auth?.user?.address}
+                        </p>
+                        <button
+                          onClick={() => navigate("/dashborad/user/profile")}
+                          className="text-xs md:text-sm text-primary-500 font-medium hover:text-primary-600"
+                        >
+                          Change Address
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mb-6 p-3 md:p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <p className="text-xs md:text-sm text-yellow-800 mb-3">
+                          Please add a delivery address to continue
+                        </p>
+                        <Button
+                          variant="outline"
+                          fullWidth
+                          onClick={() =>
+                            auth?.token
+                              ? navigate("/dashborad/user/profile")
+                              : navigate("/login", { state: "/cart" })
+                          }
+                          className="text-sm"
+                        >
+                          {auth?.token ? "Add Address" : "Login to Continue"}
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Payment Section */}
+                    {cart?.length > 0 && razorpayKey && (
+                      <div className="space-y-4">
+                        <div className="p-3 md:p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                          <p className="text-xs md:text-sm text-blue-800">
+                            <strong>Secure Payment:</strong> Your payment is
+                            processed securely through Razorpay
+                          </p>
+                        </div>
+
+                        <Button
+                          variant="primary"
+                          size="lg"
+                          fullWidth
+                          onClick={handlePayment}
+                          disabled={loading || !auth?.user?.address}
+                          icon={<AiOutlineRight size={20} />}
+                          iconPosition="right"
+                          className="text-sm md:text-base"
+                        >
+                          {loading ? "Processing..." : "Proceed to Payment"}
+                        </Button>
+                      </div>
+                    )}
+                  </Card>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Layout>
+  );
+};
+
+export default CartPage;
